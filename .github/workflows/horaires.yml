@@ -1,0 +1,63 @@
+# Met à jour chaque nuit les horaires théoriques (GTFS IDFM) et publie le site sur GitHub Pages.
+name: Horaires théoriques IDFM
+
+on:
+  schedule:
+    - cron: "30 2 * * *"      # tous les jours vers 3h30 (heure de Paris en hiver)
+  workflow_dispatch:           # bouton « Run workflow » pour lancer à la main
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Paris
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Télécharger le GTFS IDFM
+        run: |
+          curl -L --fail --retry 4 --retry-delay 30 -o gtfs.zip \
+            "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/offre-horaires-tc-gtfs-idfm/files/a925e164271e4bca93433756d6a340d1"
+          ls -lh gtfs.zip
+
+      - name: Extraire les trains (21 jours)
+        run: python3 extraire-horaires.py gtfs.zip 21 site
+
+      - name: Garder le dépôt actif (évite la mise en pause des tâches planifiées)
+        if: github.event_name == 'schedule'
+        run: |
+          if [ "$(date +%d)" = "01" ]; then
+            date -Iminutes > derniere-mise-a-jour.txt
+            git config user.name "horaires-bot"
+            git config user.email "horaires-bot@users.noreply.github.com"
+            git add derniere-mise-a-jour.txt
+            git commit -m "Mise à jour mensuelle $(date +%Y-%m)" || true
+            git push || true
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
