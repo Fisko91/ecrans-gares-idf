@@ -21,17 +21,25 @@ jobs:
     env:
       TZ: Europe/Paris
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - uses: actions/checkout@v5
 
       - name: Télécharger le GTFS IDFM
         run: |
-          curl -L --fail --retry 4 --retry-delay 30 -o gtfs.zip \
-            "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/offre-horaires-tc-gtfs-idfm/files/a925e164271e4bca93433756d6a340d1"
+          # l'adresse du fichier change à chaque mise à jour d'IDFM : on la relit dans le catalogue
+          API="https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/offre-horaires-tc-gtfs-idfm"
+          curl -sSL --retry 3 -A "Mozilla/5.0 (horaires-bot)" -o liste.json "$API/exports/json" || true
+          URL=$(python3 -c "import json;d=json.load(open('liste.json'));print(next(r['url'] for r in d if r.get('url')))" 2>/dev/null || true)
+          if [ -z "$URL" ]; then
+            curl -sSL --retry 3 -A "Mozilla/5.0 (horaires-bot)" -o liste.csv "$API/exports/csv?delimiter=%3B" || true
+            URL=$(python3 -c "import csv;r=list(csv.DictReader(open('liste.csv',encoding='utf-8-sig'),delimiter=';'));print(r[0]['url'])" 2>/dev/null || true)
+          fi
+          echo "Adresse du GTFS : $URL"
+          test -n "$URL"
+          CODE=$(curl -sSL --retry 4 --retry-delay 30 -A "Mozilla/5.0 (horaires-bot)" -o gtfs.zip -w "%{http_code}" "$URL")
+          echo "Réponse IDFM : $CODE"
           ls -lh gtfs.zip
+          test "$CODE" = "200"
+          python3 -c "import zipfile;z=zipfile.ZipFile('gtfs.zip');print(len(z.namelist()),'fichiers dans le GTFS')"
 
       - name: Extraire les trains (21 jours)
         run: python3 extraire-horaires.py gtfs.zip 21 site
@@ -48,7 +56,7 @@ jobs:
             git push || true
           fi
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: site
 
